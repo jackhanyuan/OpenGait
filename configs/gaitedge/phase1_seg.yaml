@@ -1,4 +1,3 @@
-# Note  : *** the batch_size should be equal to the gpus number at the test phase!!! ***
 data_cfg:
   dataset_name: CASIA-B*
   dataset_root: your_path
