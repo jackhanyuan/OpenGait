@@ -1,7 +1,9 @@
 import os
 from time import strftime, localtime
 import numpy as np
-from utils import get_msg_mgr, mkdir
+from my_main import opt
+from utils import get_msg_mgr, mkdir, config_loader
+from evaluation.calculate_probability import calc_similarity
 
 from .metric import mean_iou, cuda_dist, compute_ACC_mAP, evaluate_rank
 from .re_rank import re_ranking
@@ -132,29 +134,56 @@ def evaluate_indoor_dataset(data, dataset, metric='euc', cross_view_gallery=Fals
             feature, label, seq_type, view, dataset, metric)
 
 
-def evaluate_real_scene(data, dataset, metric='euc'):
+def evaluate_real_scene(data, dataset, metric='euc', rerank=False):
     msg_mgr = get_msg_mgr()
     feature, label, seq_type = data['embeddings'], data['labels'], data['types']
     label = np.array(label)
+    seq_type = np.array(seq_type)
 
     gallery_seq_type = {'0001-1000': ['1', '2'],
                         "HID2021": ['0'], '0001-1000-test': ['0'],
-                        'GREW': ['01'], 'TTG-200': ['1']}
+                        'GREW': ['01'], 'TTG-200': ['1'],
+                        'OUMVLP': ['01'],
+                        'OutdoorGait': ['nm-01'],
+                        'HID': ['01']
+                        }
     probe_seq_type = {'0001-1000': ['3', '4', '5', '6'],
                       "HID2021": ['1'], '0001-1000-test': ['1'],
-                      'GREW': ['02'], 'TTG-200': ['2', '3', '4', '5', '6']}
+                      'GREW': ['02'], 'TTG-200': ['2', '3', '4', '5', '6'],
+                      'OUMVLP': ['00'],
+                      'OutdoorGait': ['bg-01', 'cl-01', 'nm-02', 'nm-03', 'bg-02', 'bg-03', 'cl-02', 'cl-03'],
+                      'HID': ['00']
+                      }
 
     num_rank = 20
     acc = np.zeros([num_rank]) - 1.
-    gseq_mask = np.isin(seq_type, gallery_seq_type[dataset])
+    
+    if dataset in (probe_seq_type or gallery_seq_type):
+        gseq_mask = np.isin(seq_type, gallery_seq_type[dataset])
+        pseq_mask = np.isin(seq_type, probe_seq_type[dataset])
+    else:
+        gseq_mask = (label != "probe")
+        pseq_mask = (label == "probe")
+
     gallery_x = feature[gseq_mask, :]
     gallery_y = label[gseq_mask]
-    pseq_mask = np.isin(seq_type, probe_seq_type[dataset])
     probe_x = feature[pseq_mask, :]
     probe_y = label[pseq_mask]
+    probe_type = seq_type[pseq_mask]
 
-    dist = cuda_dist(probe_x, gallery_x, metric)
-    idx = dist.topk(num_rank, largest=False)[1].cpu().numpy()
+    if dataset not in (probe_seq_type or gallery_seq_type):
+        probe_y, probe_type = probe_type, probe_y
+
+    if rerank:
+        feat = np.concatenate([probe_x, gallery_x])
+        dist = cuda_dist(feat, feat, metric).cpu().numpy()
+        msg_mgr.log_info("Starting Re-ranking")
+        dist = re_ranking(dist, probe_x.shape[0], k1=6, k2=6, lambda_value=0.3)
+        
+    else:
+        dist = cuda_dist(probe_x, gallery_x, metric).cpu().numpy()
+
+    idx = np.argsort(dist, axis=1)
     acc = np.round(np.sum(np.cumsum(np.reshape(probe_y, [-1, 1]) == gallery_y[idx[:, 0:num_rank]], 1) > 0,
                           0) * 100 / dist.shape[0], 2)
     msg_mgr.log_info('==Rank-1==')
@@ -215,8 +244,7 @@ def HID_submission(data, dataset, rerank=True, metric='euc'):
         feat = np.concatenate([probe_x, gallery_x])
         dist = cuda_dist(feat, feat, metric).cpu().numpy()
         msg_mgr.log_info("Starting Re-ranking")
-        re_rank = re_ranking(
-            dist, probe_x.shape[0], k1=6, k2=6, lambda_value=0.3)
+        re_rank = re_ranking(dist, probe_x.shape[0], k1=6, k2=6, lambda_value=0.3)
         idx = np.argsort(re_rank, axis=1)
     else:
         dist = cuda_dist(probe_x, gallery_x, metric)
@@ -280,3 +308,155 @@ def evaluate_Gait3D(data, dataset, metric='euc'):
     # print_csv_format(dataset_name, results)
     msg_mgr.log_info(results)
     return results
+
+
+def evaluate_dist(data, dataset, metric='euc', rerank=False):
+    cfgs = config_loader(opt.cfgs)
+    save_result = True
+
+    msg_mgr = get_msg_mgr()
+    msg_mgr.log_info("Evaluating Dist")
+    feature, label, seq_type, view = data['embeddings'], data['labels'], data['types'], data['views']
+    label = np.array(label)
+    label_list = list(set(label))
+    seq_type = np.array(seq_type)
+    view = np.array(view)
+    view_list = list(set(view))
+    view_list.sort()
+
+    probe_dict = {'OutdoorGait': ['nm-02', 'nm-03', 'bg-01', 'bg-02', 'bg-03', 'cl-01', 'cl-02', 'cl-03'],
+                  'CASIA-B': ['nm-05', 'nm-06', 'bg-01', 'bg-02', 'cl-01', 'cl-02'],
+                  'OUMVLP': ['00'],
+                  'GREW': ['02'],
+                  'HID': ['00']
+                  }
+
+    gallery_dict = {'OutdoorGait': ['nm-01'],
+                    'CASIA-B': ['nm-01', 'nm-02', 'nm-03', 'nm-04'],
+                    'OUMVLP': ['01'],
+                    'GREW': ['01'],
+                    'HID': ['01']
+                    }
+    gallery_view = view_list[::1]
+    probe_view = gallery_view
+
+    gallery_label = label_list[::1] if dataset == 'CASIA-B' else label_list[::1]
+    probe_label = gallery_label
+    if dataset in (probe_dict or gallery_dict):
+        gallery_mask = np.isin(seq_type, gallery_dict[dataset]) & np.isin(view, gallery_view) & np.isin(label, gallery_label)
+        probe_mask = np.isin(seq_type, probe_dict[dataset]) & np.isin(view, probe_view) & np.isin(label, probe_label)
+    else:
+        gallery_mask = (label != "probe")
+        probe_mask = (label == "probe")
+
+    gallery_feature = feature[gallery_mask, :]
+    gallery_label = label[gallery_mask]
+    gallery_seq_type = seq_type[gallery_mask]
+    gallery_view = view[gallery_mask]
+
+    probe_feature = feature[probe_mask, :]
+    probe_label = label[probe_mask]
+    probe_seq_type = seq_type[probe_mask]
+    probe_view = view[probe_mask]
+
+    if dataset not in (probe_dict or gallery_dict):
+        probe_label, probe_seq_type = probe_seq_type, probe_label
+
+    if rerank:
+        msg_mgr.log_info("Starting Re-ranking")
+        feat = np.concatenate([probe_feature, gallery_feature])
+        dist = cuda_dist(feat, feat, metric).cpu().numpy()
+        dist = re_ranking(dist, probe_feature.shape[0], k1=6, k2=6, lambda_value=0.3)
+    else:
+        dist = cuda_dist(probe_feature, gallery_feature, metric).cpu().numpy()
+
+    import os
+    import pandas as pd
+    from time import strftime, localtime
+
+    header = '-train_' + cfgs['data_cfg']['dataset_name'] + '-test_' + cfgs['data_cfg'][
+        'test_dataset_name'] + '-restore_' + str(cfgs['evaluator_cfg']['restore_hint']) + '-rerank_' + str(
+        rerank) + '-' + metric
+    save_path = os.path.join("dist_result/" + "dist-" + strftime('%Y-%m%d-%H%M%S', localtime()) + header + ".csv")
+    os.makedirs("dist_result", exist_ok=True)
+
+    index = [probe_label[i] + '-' + probe_seq_type[i] + '-' + probe_view[i] for i in range(len(probe_label))]
+    columns = [gallery_label[i] + '-' + gallery_seq_type[i] + '-' + gallery_view[i] for i in range(len(gallery_label))]
+
+    dist_data = pd.DataFrame(dist, index=index, columns=columns)
+    dist_data.to_csv(save_path, sep=',', float_format='%12.4f')
+
+    msg_mgr.log_info("Dist result saved to {}/{}".format(os.getcwd(), save_path))
+
+    if save_result:
+        idx = np.argsort(dist, axis=1)
+        save_path = os.path.join(
+            "result/" + "res-" + strftime('%Y-%m%d-%H%M%S', localtime()) + header + ".csv")
+        os.makedirs("result", exist_ok=True)
+        with open(save_path, "w") as f:
+            f.write("videoID,label\n")
+            for i in range(len(idx)):
+                f.write("{},{}\n".format(probe_label[i], gallery_label[idx[i, 0]]))
+            msg_mgr.log_info("Result saved to {}/{}".format(os.getcwd(), save_path))
+
+    if dataset in ['GREW', 'HID', 'OutdoorGait']:
+        msg_mgr.log_info('Starting identification, rerank={}'.format(rerank))
+        evaluate_real_scene(data, dataset, metric='euc', rerank=rerank)
+        msg_mgr.log_info('Starting identification, rerank ={}'.format(not rerank))
+        evaluate_real_scene(data, dataset, metric='euc', rerank=not rerank)
+
+    else:
+        msg_mgr.log_info('Starting identification, rerank=False')
+        evaluate_indoor_dataset(data, dataset, metric='euc')
+
+    return
+
+
+def evaluate_similarity(data, dataset, metric='euc', rerank=False):
+    rank_k = 6
+
+    msg_mgr = get_msg_mgr()
+    msg_mgr.log_info("Evaluating Dist")
+    feature, label, seq_type, view = data['embeddings'], data['labels'], data['types'], data['views']
+    label = np.array(label)
+    seq_type = np.array(seq_type)
+
+    gallery_mask = (label != "probe")
+    probe_mask = (label == "probe")
+
+    gallery_feature = feature[gallery_mask, :]
+    gallery_label = label[gallery_mask]
+    gallery_seq_type = seq_type[gallery_mask]
+
+    probe_feature = feature[probe_mask, :]
+    probe_label = seq_type[probe_mask]
+
+    if rerank:
+        print('Starting Re-ranking')
+        feat = np.concatenate([probe_feature, gallery_feature])
+        dist = cuda_dist(feat, feat, metric).cpu().numpy()
+        dist = re_ranking(dist, probe_feature.shape[0], k1=6, k2=6, lambda_value=0.3)
+        
+    else:
+        dist = cuda_dist(probe_feature, gallery_feature, metric).cpu().numpy()
+
+    idx = np.argsort(dist, axis=1)
+    simi = list(map(calc_similarity, dist))
+    res = {}
+    n = min(len(idx[0]), rank_k)  # 只要排名前rank_k的
+    for i in range(len(idx)):
+        label = {}
+        for j in range(n):
+            index = idx[i, j]
+            g_label = str(gallery_label[index] + "-" + gallery_seq_type[index])
+            label[g_label] = {"dist": np.float(dist[i][index]), "similarity": np.float(simi[i][index])}
+        res[probe_label[i]] = label
+
+    msg_mgr.log_info(res)
+
+    # for i in res:
+    #     print(i)
+    #     for j in res[i]:
+    #         print("\t{0:13}\t{1:5.3f}\t{2:6.3f}%".format(j, res[i][j]["dist"], res[i][j]["similarity"] * 100))
+
+    return res

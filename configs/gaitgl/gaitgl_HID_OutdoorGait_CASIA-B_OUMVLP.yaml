@@ -1,0 +1,76 @@
+# Note  : *** the batch_size should be equal to the gpus number at the test phase!!! ***
+data_cfg:
+  dataset_name: HID
+  dataset_root: ../OpenGait/HID-OutdoorGait-CASIA-B-OUMVLP-pkl # ../OpenGait/HID2022-test-pkl # ../OpenGait/HID2022-my-test2 # 
+  dataset_partition: ./datasets/HID-OutdoorGait-CASIA-B-OUMVLP/HID.json # ./datasets/HID-OutdoorGait-CASIA-B-OUMVLP/HID-OutdoorGait-CASIA-B-OUMVLP.json # 
+  num_workers: 8
+  remove_no_gallery: false
+  test_dataset_name: HID # OutdoorGait # CASIA-B # OUMVLP #   
+
+evaluator_cfg:
+  enable_float16: false
+  restore_ckpt_strict: true
+  restore_hint: 170000
+  save_name: GaitGL-HID-OutdoorGait-CASIA-B-OUMVLP
+  eval_func: evaluate_dist # evaluate_real_scene # evaluate_indoor_dataset # evaluate_similarity
+  rerank: false # true # 
+  sampler:
+    batch_size: 1 # 4
+    sample_type: all_ordered
+    type: InferenceSampler
+  transform:
+    - type: BaseSilCuttingTransform
+      img_w: 64
+  metric: euc # cos
+
+loss_cfg:
+  - loss_term_weight: 1.0
+    margin: 0.2
+    type: TripletLoss
+    log_prefix: triplet
+  - loss_term_weight: 1.0
+    scale: 1
+    type: CrossEntropyLoss
+    log_accuracy: true
+    label_smooth: true
+    log_prefix: softmax
+
+model_cfg:
+  model: GaitGL
+  channels: [32, 64, 128, 256]
+  class_num: 700
+
+optimizer_cfg:
+  lr: 1.0e-4
+  solver: Adam
+  weight_decay: 0
+
+scheduler_cfg:
+  gamma: 0.1
+  milestones:
+    - 120000
+    - 160000
+  scheduler: MultiStepLR
+
+trainer_cfg:
+  enable_float16: true
+  with_test: false
+  log_iter: 100
+  restore_ckpt_strict: true
+  restore_hint: 0
+  save_iter: 5000
+  save_name: GaitGL-HID-OutdoorGait-CASIA-B-OUMVLP
+  sync_BN: true
+  total_iter: 100000
+  sampler:
+    batch_shuffle: true
+    batch_size:
+      - 8 # 32
+      - 8
+    frames_num_fixed: 30
+    frames_skip_num: 0
+    sample_type: fixed_ordered
+    type: TripletSampler
+  transform:
+    - type: BaseSilCuttingTransform
+      img_w: 64
