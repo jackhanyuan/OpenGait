@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(__file__))
 
 def person_ext_from_video():
     INPUT_PATH = "CASIA-B-video"
-    OUTPUT_PATH = "CASIA-B-video-pkl"
+    OUTPUT_PATH = "CASIA-B-video-split"
 
     print(f"Walk to {INPUT_PATH}")
 

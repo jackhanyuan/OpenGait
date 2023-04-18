@@ -19,7 +19,7 @@ from datasets.HID.is_people.classification import Classification
 classfication = Classification()
 parser = argparse.ArgumentParser(description='Pretreatment')
 parser.add_argument('--img_size', default=64, type=int, help='Image resizing size. Default 64')
-parser.add_argument('--augment', default=False, type=bool, help='Image Horizontal Flip Augmented Dataset')
+parser.add_argument('--augment', default=True, type=bool, help='Image Horizontal Flip Augmented Dataset')
 parser.add_argument('--is_people', default=True, type=bool, help='judge is people')
 opt = parser.parse_args()
 
@@ -150,14 +150,14 @@ def datasets_to_pkl(input_path, output_path):
         seq_type = os.listdir(os.path.join(input_path, _id))
         seq_type.sort()
         for _seq_type in seq_type[::1]:
-            INPUT_PATH = os.path.join(input_path, _id, _seq_type)
-            imgs_to_pickle(_id, _seq_type, INPUT_PATH, output_path)
+            # INPUT_PATH = os.path.join(input_path, _id, _seq_type)
+            # imgs_to_pickle(_id, _seq_type, INPUT_PATH, output_path)
 
-            # view = os.listdir(os.path.join(input_path, _id, _seq_type))
-            # view.sort()
-            # for _view in view[::1]:
-            #     INPUT_PATH = os.path.join(input_path, _id, _seq_type, _view)
-            #     imgs_to_pickle(_id, _seq_type, INPUT_PATH, output_path)
+            view = os.listdir(os.path.join(input_path, _id, _seq_type))
+            view.sort()
+            for _view in view[::1]:
+                INPUT_PATH = os.path.join(input_path, _id, _seq_type, _view)
+                imgs_to_pickle(_id, _seq_type, INPUT_PATH, output_path)
 
 
 def test_cut_img(image_path):
@@ -167,8 +167,6 @@ def test_cut_img(image_path):
 
 
 if __name__ == '__main__':
-    input_path = "OutdoorGait/train/segmentations"
-    output_path = "OutdoorGait-clean-pkl"
-    # input_path = "OutdoorGait-video-split"
-    # output_path = "OutdoorGait-video-augment-pkl"
+    input_path = "CASIA-B-video"
+    output_path = "CASIA-B-video-clean-augment-pkl"
     datasets_to_pkl(input_path, output_path)
